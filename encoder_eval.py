@@ -24,6 +24,7 @@ from transformers import (
     TrainingArguments,
 )
 from transformers import set_seed
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 
 console = Console()
@@ -90,22 +91,34 @@ class TaskRunner:
             level=logging.INFO,
         )
 
-    def load_model_and_tokenizer(self, num_labels: int, label_names: Optional[List[str]] = None):
+    def ensure_float_labels(self, dataset: Dataset, label_column: str) -> Dataset:
+        """Convert label column to float32 for regression tasks."""
+        from datasets import Value
+        new_features = dataset.features.copy()
+        new_features[label_column] = Value('float32')
+        return dataset.cast(new_features)
+
+    def load_model_and_tokenizer(self, num_labels: int, label_names: Optional[List[str]] = None, problem_type: Optional[str] = None):
         logger.info(f"Loading model and tokenizer: {self.config.model}")
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.model)
 
+        config_kwargs = {}
         if label_names:
-            model_config = AutoConfig.from_pretrained(
-                self.config.model,
-                id2label={str(i): name for i, name in enumerate(label_names)},
-                label2id={name: i for i, name in enumerate(label_names)},
-            )
+            config_kwargs.update({
+                "id2label": {str(i): name for i, name in enumerate(label_names)},
+                "label2id": {name: i for i, name in enumerate(label_names)},
+            })
         else:
-            model_config = AutoConfig.from_pretrained(
-                self.config.model,
-                num_labels=num_labels,
-            )
+            config_kwargs["num_labels"] = num_labels
+
+        if problem_type:
+            config_kwargs["problem_type"] = problem_type
+
+        model_config = AutoConfig.from_pretrained(
+            self.config.model,
+            **config_kwargs
+        )
 
         if self.config.freeze_base:
             self.base_model = AutoModelForSequenceClassification.from_pretrained(
@@ -205,7 +218,24 @@ class TaskRunner:
         predictions = np.argmax(predictions, axis=1)
         return metric.compute(predictions=predictions, references=labels)
 
-  
+    def compute_metrics_regression(self, eval_pred):
+        predictions, labels = eval_pred
+        predictions = predictions.squeeze()
+        labels = labels.squeeze()
+
+        mse = mean_squared_error(labels, predictions)
+        rmse = np.sqrt(mse)
+        mae = mean_absolute_error(labels, predictions)
+        r2 = r2_score(labels, predictions)
+
+        return {
+            "mse": mse,
+            "rmse": rmse,
+            "mae": mae,
+            "r2": r2,
+        }
+
+
     def compute_metrics_token_classification(self, eval_pred):
         metric = load_metric("seqeval")
         predictions, labels = eval_pred
@@ -242,33 +272,38 @@ class TaskRunner:
         # Determine the correct label column based on task type
         label_column = config.tags_column if config.type == "token_classification" else config.label_column
 
-        label_names = None
-        # Handle sequence features (like token classification)
-        if hasattr(train_dataset.features[label_column], "feature"):
-            # This is a Sequence feature
-            if hasattr(train_dataset.features[label_column].feature, "names"):
-                label_names = train_dataset.features[label_column].feature.names
+        # Special handling for regression - num_labels is always 1
+        if config.type == "regression":
+            num_labels = 1
+            label_names = None
+        else:
+            label_names = None
+            # Handle sequence features (like token classification)
+            if hasattr(train_dataset.features[label_column], "feature"):
+                # This is a Sequence feature
+                if hasattr(train_dataset.features[label_column].feature, "names"):
+                    label_names = train_dataset.features[label_column].feature.names
+                    num_labels = len(label_names)
+                else:
+                    # Flatten all label sequences to get unique labels
+                    all_labels = []
+                    for label_seq in train_dataset[label_column]:
+                        all_labels.extend(label_seq)
+                    num_labels = len(set(all_labels))
+            elif hasattr(train_dataset.features[label_column], "names"):
+                # Regular ClassLabel feature
+                label_names = train_dataset.features[label_column].names
                 num_labels = len(label_names)
             else:
-                # Flatten all label sequences to get unique labels
-                all_labels = []
-                for label_seq in train_dataset[label_column]:
-                    all_labels.extend(label_seq)
-                num_labels = len(set(all_labels))
-        elif hasattr(train_dataset.features[label_column], "names"):
-            # Regular ClassLabel feature
-            label_names = train_dataset.features[label_column].names
-            num_labels = len(label_names)
-        else:
-            # No names, infer from data
-            if config.type == "token_classification":
-                # Flatten all label sequences to get unique labels
-                all_labels = []
-                for label_seq in train_dataset[label_column]:
-                    all_labels.extend(label_seq)
-                num_labels = len(set(all_labels))
-            else:
-                num_labels = len(set(train_dataset[label_column]))
+                # No names, infer from data
+                if config.type == "token_classification":
+                    # Flatten all label sequences to get unique labels
+                    all_labels = []
+                    for label_seq in train_dataset[label_column]:
+                        all_labels.extend(label_seq)
+                    num_labels = len(set(all_labels))
+                else:
+                    num_labels = len(set(train_dataset[label_column]))
 
         runs = config.runs or self.config.runs
         all_metrics = []
@@ -286,6 +321,11 @@ class TaskRunner:
             train_dataset = dataset_dict[config.train_split]
             eval_dataset = dataset_dict[config.eval_split]
 
+            # Convert labels to float32 for regression after reloading
+            if config.type == "regression":
+                train_dataset = self.ensure_float_labels(train_dataset, config.label_column)
+                eval_dataset = self.ensure_float_labels(eval_dataset, config.label_column)
+
             if config.type == "token_classification":
                 self.load_token_classification_model(num_labels, label_names)
                 train_dataset = self.preprocess_token_classification(train_dataset, config)
@@ -298,7 +338,13 @@ class TaskRunner:
                 eval_dataset = self.preprocess_pair_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_classification
                 data_collator = DataCollatorWithPadding(self.tokenizer)
-            else:
+            elif config.type == "regression":
+                self.load_model_and_tokenizer(num_labels, label_names, problem_type="regression")
+                train_dataset = self.preprocess_classification(train_dataset, config)
+                eval_dataset = self.preprocess_classification(eval_dataset, config)
+                compute_metrics = self.compute_metrics_regression
+                data_collator = DataCollatorWithPadding(self.tokenizer)
+            else:  # classification
                 self.load_model_and_tokenizer(num_labels, label_names)
                 train_dataset = self.preprocess_classification(train_dataset, config)
                 eval_dataset = self.preprocess_classification(eval_dataset, config)
@@ -463,6 +509,18 @@ def create_example_config():
                 "max_length": 128,
                 "epochs": 3,
                 "learning_rate": 2e-5,
+                "batch_size": 16,
+            },
+            {
+                "name": "nhull/125-tripadvisor-reviews",
+                "type": "regression",
+                "train_split": "train",
+                "eval_split": "train",
+                "text_column": "text",
+                "label_column": "label",
+                "max_length": 128,
+                "epochs": 5,
+                "learning_rate": 5e-5,
                 "batch_size": 16,
             },
         ],

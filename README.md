@@ -66,6 +66,16 @@ datasets:
     epochs: 3
     learning_rate: 2e-5
     batch_size: 16
+
+  - name: nhull/125-tripadvisor-reviews  # Regression
+    type: regression
+    train_split: train
+    eval_split: train  # Only train split available
+    text_column: text
+    label_column: label
+    epochs: 5
+    learning_rate: 5e-5
+    batch_size: 16
 ```
 
 ## Task Types
@@ -73,6 +83,7 @@ datasets:
 - **classification**: Single text classification
 - **token_classification**: Token-level classification (NER, POS tagging)
 - **pair_classification**: Two-sentence classification (NLI, paraphrase detection)
+- **regression**: Predict continuous values (scores, ratings)
 
 ## Output
 
@@ -83,9 +94,11 @@ Results display in the CLI and save to `results/results.jsonl`:
 ┃ Dataset                 ┃ Type           ┃ Metric          ┃ Mean ± Std      ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
 │ iastate/onestop_english │ classification │ eval_accuracy   │ 0.3386 ± 0.0123 │
+│ nhull/125-tripadvisor   │ regression │ eval_rmse       │ 0.4215 ± 0.0321 │
 └─────────────────────────┴────────────────┴─────────────────┴─────────────────┘
 ```
 
 ```json
 {"dataset": "iastate/onestop_english", "type": "classification", "num_labels": 3, "runs": 2, "metrics": {"eval_accuracy_mean": 0.3386, "eval_accuracy_std": 0.0123}}
+{"dataset": "nhull/125-tripadvisor-reviews", "type": "regression", "num_labels": 1, "runs": 3, "metrics": {"eval_rmse_mean": 0.4215, "eval_r2_mean": 0.6782}}
 ```
