@@ -1,0 +1,39 @@
+datasets:
+- batch_size: 16
+  epochs: 3
+  eval_split: test
+  label_column: label
+  learning_rate: 2.0e-05
+  max_length: 128
+  name: iastate/onestop_english
+  runs: 5
+  text_column: text
+  train_split: train
+  type: classification
+- batch_size: 32
+  epochs: 5
+  eval_split: validation
+  learning_rate: 5.0e-05
+  max_length: 128
+  name: conll2003
+  tags_column: ner_tags
+  tokens_column: tokens
+  train_split: train
+  type: token_classification
+- batch_size: 16
+  epochs: 3
+  eval_split: validation_matched
+  text2_column: hypothesis
+  label_column: label
+  learning_rate: 2.0e-05
+  max_length: 128
+  name: nyu-mll/glue
+  text1_column: premise
+  subset: mnli
+  train_split: train
+  type: pair_classification
+freeze_base: true
+model: prajjwal1/bert-tiny
+output_dir: results
+runs: 3
+seed: 42
