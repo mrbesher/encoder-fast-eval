@@ -1,7 +1,7 @@
 [project]
 name = "encoder-fast-eval"
 version = "0.1.0"
-description = "Add your description here"
+description = "Fast evaluation of encoder models on NLP tasks by freezing base parameters and training only classification heads"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
