@@ -386,7 +386,7 @@ class TaskRunner:
                 save_strategy="no",
                 logging_strategy="no",
                 report_to="none",
-                disable_tqdm=True,
+                torch_compile=True,
             )
 
             trainer = Trainer(
