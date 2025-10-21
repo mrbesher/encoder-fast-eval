@@ -94,7 +94,7 @@ Results display in the CLI and save to `results/results.jsonl`:
 ┃ Dataset                 ┃ Type           ┃ Metric          ┃ Mean ± Std      ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
 │ iastate/onestop_english │ classification │ eval_accuracy   │ 0.3386 ± 0.0123 │
-│ nhull/125-tripadvisor   │ regression │ eval_rmse       │ 0.4215 ± 0.0321 │
+│ nhull/125-tripadvisor   │ regression     │ eval_rmse       │ 0.4215 ± 0.0321 │
 └─────────────────────────┴────────────────┴─────────────────┴─────────────────┘
 ```
 
