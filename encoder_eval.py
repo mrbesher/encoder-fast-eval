@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import torch
 import yaml
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset, concatenate_datasets
 from evaluate import load as load_metric
 from rich.console import Console
 from rich.table import Table
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class DatasetConfig:
     name: str
     type: str
-    subset: Optional[str] = None
+    subset: Optional[str | List[str]] = None
     train_split: str = "train"
     eval_split: str = "validation"
     text_column: str = "text"
@@ -259,15 +259,42 @@ class TaskRunner:
         }
 
     def run_dataset(self, config: DatasetConfig) -> Dict[str, Any]:
-        logger.info(f"Running dataset: {config.name}")
+        subset_str = f" ({config.subset})" if config.subset else ""
+        logger.info(f"Running dataset: {config.name}{subset_str}")
 
-        # Load dataset once to get label information
-        dataset_dict = load_dataset(config.name, name=config.subset) if config.subset else load_dataset(config.name)
-        if isinstance(dataset_dict, Dataset):
-            dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+        # Load dataset(s) once to get label information
+        if config.subset:
+            if isinstance(config.subset, list):
+                # Load multiple subsets and concatenate them
+                train_datasets = []
+                eval_datasets = []
 
-        train_dataset = dataset_dict[config.train_split]
-        eval_dataset = dataset_dict[config.eval_split]
+                for subset in config.subset:
+                    dataset_dict = load_dataset(config.name, name=subset)
+                    if isinstance(dataset_dict, Dataset):
+                        dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+
+                    train_datasets.append(dataset_dict[config.train_split])
+                    eval_datasets.append(dataset_dict[config.eval_split])
+
+                train_dataset = concatenate_datasets(train_datasets)
+                eval_dataset = concatenate_datasets(eval_datasets)
+            else:
+                # Single subset
+                dataset_dict = load_dataset(config.name, name=config.subset)
+                if isinstance(dataset_dict, Dataset):
+                    dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+
+                train_dataset = dataset_dict[config.train_split]
+                eval_dataset = dataset_dict[config.eval_split]
+        else:
+            # No subset
+            dataset_dict = load_dataset(config.name)
+            if isinstance(dataset_dict, Dataset):
+                dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+
+            train_dataset = dataset_dict[config.train_split]
+            eval_dataset = dataset_dict[config.eval_split]
 
         # Determine the correct label column based on task type
         label_column = config.tags_column if config.type == "token_classification" else config.label_column
@@ -313,68 +340,50 @@ class TaskRunner:
 
             set_seed(self.config.seed + run)
 
-            # Reload dataset for each run to avoid modification issues
-            dataset_dict = load_dataset(config.name, name=config.subset) if config.subset else load_dataset(config.name)
-            if isinstance(dataset_dict, Dataset):
-                dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
-
-            train_dataset = dataset_dict[config.train_split]
-            eval_dataset = dataset_dict[config.eval_split]
-
-            # Convert labels to float32 for regression after reloading
-            if config.type == "regression":
-                train_dataset = self.ensure_float_labels(train_dataset, config.label_column)
-                eval_dataset = self.ensure_float_labels(eval_dataset, config.label_column)
-
+            # Load fresh model for each run
             if config.type == "token_classification":
                 self.load_token_classification_model(num_labels, label_names)
-                train_dataset = self.preprocess_token_classification(train_dataset, config)
-                eval_dataset = self.preprocess_token_classification(eval_dataset, config)
+                train_dataset_run = self.preprocess_token_classification(train_dataset, config)
+                eval_dataset_run = self.preprocess_token_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_token_classification
                 data_collator = DataCollatorForTokenClassification(self.tokenizer, pad_to_multiple_of=8)
             elif config.type == "pair_classification":
                 self.load_model_and_tokenizer(num_labels, label_names)
-                train_dataset = self.preprocess_pair_classification(train_dataset, config)
-                eval_dataset = self.preprocess_pair_classification(eval_dataset, config)
+                train_dataset_run = self.preprocess_pair_classification(train_dataset, config)
+                eval_dataset_run = self.preprocess_pair_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_classification
                 data_collator = DataCollatorWithPadding(self.tokenizer)
             elif config.type == "regression":
                 self.load_model_and_tokenizer(num_labels, label_names, problem_type="regression")
-                train_dataset = self.preprocess_classification(train_dataset, config)
-                eval_dataset = self.preprocess_classification(eval_dataset, config)
+                train_dataset_run = self.preprocess_classification(train_dataset, config)
+                eval_dataset_run = self.preprocess_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_regression
                 data_collator = DataCollatorWithPadding(self.tokenizer)
             else:  # classification
                 self.load_model_and_tokenizer(num_labels, label_names)
-                train_dataset = self.preprocess_classification(train_dataset, config)
-                eval_dataset = self.preprocess_classification(eval_dataset, config)
+                train_dataset_run = self.preprocess_classification(train_dataset, config)
+                eval_dataset_run = self.preprocess_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_classification
                 data_collator = DataCollatorWithPadding(self.tokenizer)
 
             # Remove only the text columns that were actually used
             text_columns = []
-            if config.text_column and config.text_column in train_dataset.column_names:
+            if config.text_column and config.text_column in train_dataset_run.column_names:
                 text_columns.append(config.text_column)
-            if config.text1_column and config.text1_column in train_dataset.column_names:
+            if config.text1_column and config.text1_column in train_dataset_run.column_names:
                 text_columns.append(config.text1_column)
-            if config.text2_column and config.text2_column in train_dataset.column_names:
+            if config.text2_column and config.text2_column in train_dataset_run.column_names:
                 text_columns.append(config.text2_column)
-            if config.tokens_column and config.tokens_column in train_dataset.column_names:
+            if config.tokens_column and config.tokens_column in train_dataset_run.column_names:
                 text_columns.append(config.tokens_column)
-            if config.tags_column and config.tags_column in train_dataset.column_names:
+            if config.tags_column and config.tags_column in train_dataset_run.column_names:
                 text_columns.append(config.tags_column)
 
             for col in text_columns:
-                if col in train_dataset.column_names:
-                    train_dataset = train_dataset.remove_columns(col)
-                if col in eval_dataset.column_names:
-                    eval_dataset = eval_dataset.remove_columns(col)
-
-            # Remove token_type_ids if model doesn't support it
-            if "token_type_ids" in train_dataset.column_names:
-                train_dataset = train_dataset.remove_columns(["token_type_ids"])
-            if "token_type_ids" in eval_dataset.column_names:
-                eval_dataset = eval_dataset.remove_columns(["token_type_ids"])
+                if col in train_dataset_run.column_names:
+                    train_dataset_run = train_dataset_run.remove_columns(col)
+                if col in eval_dataset_run.column_names:
+                    eval_dataset_run = eval_dataset_run.remove_columns(col)
 
             training_args = TrainingArguments(
                 output_dir=f"{self.config.output_dir}/{config.name}_run_{run}",
@@ -392,8 +401,8 @@ class TaskRunner:
             trainer = Trainer(
                 model=self.model,
                 args=training_args,
-                train_dataset=train_dataset,
-                eval_dataset=eval_dataset,
+                train_dataset=train_dataset_run,
+                eval_dataset=eval_dataset_run,
                 compute_metrics=compute_metrics,
                 data_collator=data_collator,
                 processing_class=self.tokenizer,
