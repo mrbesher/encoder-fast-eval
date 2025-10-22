@@ -249,15 +249,12 @@ class TaskRunner:
         return dataset.map(tokenize, batched=True)
 
     def preprocess_token_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
-        if not hasattr(dataset.features[config.tags_column], "feature"):
-            all_labels = set()
-            for label_seq in dataset[config.tags_column]:
-                all_labels.update(label_seq)
+        all_labels = set()
+        for label_seq in dataset[config.tags_column]:
+            all_labels.update(label_seq)
 
-            if all(isinstance(label, str) for label in all_labels):
-                label_to_id = {label: i for i, label in enumerate(sorted(all_labels))}
-            else:
-                label_to_id = None
+        if all(isinstance(label, str) for label in all_labels):
+            label_to_id = {label: i for i, label in enumerate(sorted(all_labels))}
         else:
             label_to_id = None
 
@@ -383,7 +380,10 @@ class TaskRunner:
                     all_labels = []
                     for label_seq in train_dataset[label_column]:
                         all_labels.extend(label_seq)
-                    num_labels = len(set(all_labels))
+                    unique_labels = sorted(set(all_labels))
+                    num_labels = len(unique_labels)
+                    if all(isinstance(label, str) for label in unique_labels):
+                        label_names = unique_labels
             elif hasattr(train_dataset.features[label_column], "names"):
                 label_names = train_dataset.features[label_column].names
                 num_labels = len(label_names)
@@ -392,9 +392,15 @@ class TaskRunner:
                     all_labels = []
                     for label_seq in train_dataset[label_column]:
                         all_labels.extend(label_seq)
-                    num_labels = len(set(all_labels))
+                    unique_labels = sorted(set(all_labels))
+                    num_labels = len(unique_labels)
+                    if all(isinstance(label, str) for label in unique_labels):
+                        label_names = unique_labels
                 else:
-                    num_labels = len(set(train_dataset[label_column]))
+                    unique_labels = sorted(set(train_dataset[label_column]))
+                    num_labels = len(unique_labels)
+                    if all(isinstance(label, str) for label in unique_labels):
+                        label_names = unique_labels
 
         runs = config.runs or self.config.runs
         completed_runs = self.check_completed_runs(config.name, config.type, config.subset)
