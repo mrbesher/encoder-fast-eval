@@ -506,12 +506,13 @@ class TaskRunner:
             return 0
 
         completed_runs = 0
-        for line in self.results_file.readlines():
-            result = json.loads(line.strip())
-            if (result.get("dataset") == dataset_name and
-                result.get("type") == task_type and
-                "run" in result):
-                completed_runs = max(completed_runs, result["run"])
+        with open(self.results_file) as f:
+            for line in f:
+                result = json.loads(line.strip())
+                if (result.get("dataset") == dataset_name and
+                    result.get("type") == task_type and
+                    "run" in result):
+                    completed_runs = max(completed_runs, result["run"])
 
         return completed_runs
 
@@ -520,12 +521,13 @@ class TaskRunner:
             return []
 
         metrics = []
-        for line in self.results_file.readlines():
-            result = json.loads(line.strip())
-            if (result.get("dataset") == dataset_name and
-                result.get("type") == task_type and
-                "run" in result):
-                metrics.append(result["metrics"])
+        with open(self.results_file) as f:
+            for line in f:
+                result = json.loads(line.strip())
+                if (result.get("dataset") == dataset_name and
+                    result.get("type") == task_type and
+                    "run" in result):
+                    metrics.append(result["metrics"])
 
         return metrics
 
@@ -533,7 +535,10 @@ class TaskRunner:
         if not self.results_file.exists():
             return {}
 
-        for line in reversed(self.results_file.readlines()):
+        with open(self.results_file) as f:
+            lines = f.readlines()
+
+        for line in reversed(lines):
             result = json.loads(line.strip())
             if (result.get("dataset") == dataset_name and
                 result.get("type") == task_type and
