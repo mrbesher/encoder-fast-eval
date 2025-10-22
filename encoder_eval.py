@@ -710,6 +710,7 @@ def main():
 
     parser.add_argument("config", nargs="?", help="Path to config YAML file")
     parser.add_argument("--model", help="Override model name")
+    parser.add_argument("--max-length", type=int, help="Override maximum sequence length")
     parser.add_argument("--runs", type=int, help="Override number of runs")
     parser.add_argument("--seed", type=int, help="Override random seed")
     parser.add_argument("--output-dir", help="Override output directory")
@@ -731,6 +732,8 @@ def main():
 
     if args.model:
         config.model = args.model
+    if args.max_length:
+        config.max_length = args.max_length
     if args.runs:
         config.runs = args.runs
     if args.seed:
