@@ -1,10 +1,9 @@
 datasets:
 - batch_size: 16
   epochs: 3
-  eval_split: validation
+  eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/SentiTurca
   subset: e-commerce
   text_column: text
@@ -12,10 +11,9 @@ datasets:
   type: classification
 - batch_size: 16
   epochs: 3
-  eval_split: validation
+  eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/SentiTurca
   subset: hate
   text_column: text
@@ -23,10 +21,9 @@ datasets:
   type: classification
 - batch_size: 16
   epochs: 3
-  eval_split: validation
+  eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/SentiTurca
   subset: movies
   text_column: text
@@ -37,140 +34,17 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/TrCOLA
   text_column: variation
   train_split: train
   type: classification
 - batch_size: 16
   epochs: 3
-  eval_split: validation
+  eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/TurkishHateMap
-  subset: animals
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: cities
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: ethnicity
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: lgbt
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: misogyny
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: occupations
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: political-orientation
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: politics
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: refugees
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: religion
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: sects
-  text_column: text
-  train_split: train
-  type: classification
-- batch_size: 16
-  epochs: 3
-  eval_split: validation
-  label_column: label
-  learning_rate: 2.0e-05
-  max_length: 128
-  name: turkish-nlp-suite/TurkishHateMap
-  subset: veganism
+  subset: [animals, cities, ethnicity, lgbt, misogyny, occupations, political-orientation, politics, refugees, religion, sects, veganism]
   text_column: text
   train_split: train
   type: classification
@@ -179,7 +53,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/MusteriYorumlari
   text_column: text
   train_split: train
@@ -189,7 +62,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/BuyukSinema
   text_column: text
   train_split: train
@@ -199,7 +71,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/turkish-wikiNER
   tags_column: tags
   text_column: text
@@ -208,6 +79,6 @@ datasets:
   type: token_classification
 freeze_base: true
 model: dbmdz/bert-base-turkish-cased
-output_dir: results_turkish
-runs: 3
+output_dir: results
+runs: 5
 seed: 42
