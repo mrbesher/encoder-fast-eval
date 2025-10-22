@@ -80,5 +80,5 @@ datasets:
 freeze_base: true
 model: dbmdz/bert-base-turkish-cased
 output_dir: results
-runs: 3
+runs: 5
 seed: 42
