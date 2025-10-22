@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
+import argparse
+import hashlib
 import json
 import logging
 import os
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-import torch
 import yaml
 from datasets import Dataset, DatasetDict, load_dataset, concatenate_datasets
 from evaluate import load as load_metric
@@ -75,21 +78,54 @@ class EvalConfig:
             else:
                 setattr(self, k, v)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary for hashing."""
+        return {
+            "model": self.model,
+            "freeze_base": self.freeze_base,
+            "runs": self.runs,
+            "seed": self.seed,
+            "datasets": [
+                {k: v for k, v in d.__dict__.items() if not k.startswith('_')}
+                for d in self.datasets
+            ],
+        }
+
+    def get_hash(self) -> str:
+        """Generate SHA256 hash of the config."""
+        config_str = json.dumps(self.to_dict(), sort_keys=True)
+        return hashlib.sha256(config_str.encode()).hexdigest()[:16]
+
+    def get_model_short_name(self) -> str:
+        """Extract short model name from path."""
+        return self.model.split('/')[-1]
+
 
 class TaskRunner:
     def __init__(self, config: EvalConfig):
         self.config = config
         self.tokenizer = None
         self.model = None
+        self.config_hash = config.get_hash()
+        self.model_short_name = config.get_model_short_name()
+
+        self.unique_output_dir = Path(config.output_dir) / self.model_short_name / self.config_hash
+        self.results_file = self.unique_output_dir / "results.jsonl"
+        self.config_file = self.unique_output_dir / "config.yaml"
 
         set_seed(config.seed)
+        self.unique_output_dir.mkdir(parents=True, exist_ok=True)
 
-        os.makedirs(config.output_dir, exist_ok=True)
+        if not self.config_file.exists():
+            self.config_file.write_text(yaml.dump(config.to_dict(), default_flow_style=False))
 
         logging.basicConfig(
             format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
             level=logging.INFO,
         )
+
+        logger.info(f"Output directory: {self.unique_output_dir}")
+        logger.info(f"Config hash: {self.config_hash}")
 
     def ensure_float_labels(self, dataset: Dataset, label_column: str) -> Dataset:
         """Convert label column to float32 for regression tasks."""
@@ -163,6 +199,16 @@ class TaskRunner:
             logger.info("Frozen base model parameters")
 
     def preprocess_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
+        if not hasattr(dataset.features[config.label_column], "names"):
+            unique_labels = sorted(set(dataset[config.label_column]))
+            if all(isinstance(label, str) for label in unique_labels):
+                label_to_id = {label: i for i, label in enumerate(unique_labels)}
+
+                def convert_labels(examples):
+                    return {"labels": [label_to_id[label] for label in examples[config.label_column]]}
+
+                dataset = dataset.map(convert_labels, batched=True)
+
         def tokenize(examples):
             return self.tokenizer(
                 examples[config.text_column],
@@ -184,6 +230,18 @@ class TaskRunner:
         return dataset.map(tokenize, batched=True)
 
     def preprocess_token_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
+        if not hasattr(dataset.features[config.tags_column], "feature"):
+            all_labels = set()
+            for label_seq in dataset[config.tags_column]:
+                all_labels.update(label_seq)
+
+            if all(isinstance(label, str) for label in all_labels):
+                label_to_id = {label: i for i, label in enumerate(sorted(all_labels))}
+            else:
+                label_to_id = None
+        else:
+            label_to_id = None
+
         def tokenize_and_align_labels(examples):
             tokenized_inputs = self.tokenizer(
                 examples[config.tokens_column],
@@ -201,7 +259,10 @@ class TaskRunner:
                     if word_idx is None:
                         label_ids.append(-100)
                     elif word_idx != previous_word_idx:
-                        label_ids.append(label[word_idx])
+                        if label_to_id is not None:
+                            label_ids.append(label_to_id[label[word_idx]])
+                        else:
+                            label_ids.append(label[word_idx])
                     else:
                         label_ids.append(-100)
                     previous_word_idx = word_idx
@@ -265,66 +326,50 @@ class TaskRunner:
         # Load dataset(s) once to get label information
         if config.subset:
             if isinstance(config.subset, list):
-                # Load multiple subsets and concatenate them
                 train_datasets = []
                 eval_datasets = []
-
                 for subset in config.subset:
                     dataset_dict = load_dataset(config.name, name=subset)
                     if isinstance(dataset_dict, Dataset):
                         dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
-
                     train_datasets.append(dataset_dict[config.train_split])
                     eval_datasets.append(dataset_dict[config.eval_split])
-
                 train_dataset = concatenate_datasets(train_datasets)
                 eval_dataset = concatenate_datasets(eval_datasets)
             else:
-                # Single subset
                 dataset_dict = load_dataset(config.name, name=config.subset)
                 if isinstance(dataset_dict, Dataset):
                     dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
-
                 train_dataset = dataset_dict[config.train_split]
                 eval_dataset = dataset_dict[config.eval_split]
         else:
-            # No subset
             dataset_dict = load_dataset(config.name)
             if isinstance(dataset_dict, Dataset):
                 dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
-
             train_dataset = dataset_dict[config.train_split]
             eval_dataset = dataset_dict[config.eval_split]
 
-        # Determine the correct label column based on task type
         label_column = config.tags_column if config.type == "token_classification" else config.label_column
 
-        # Special handling for regression - num_labels is always 1
         if config.type == "regression":
             num_labels = 1
             label_names = None
         else:
             label_names = None
-            # Handle sequence features (like token classification)
             if hasattr(train_dataset.features[label_column], "feature"):
-                # This is a Sequence feature
                 if hasattr(train_dataset.features[label_column].feature, "names"):
                     label_names = train_dataset.features[label_column].feature.names
                     num_labels = len(label_names)
                 else:
-                    # Flatten all label sequences to get unique labels
                     all_labels = []
                     for label_seq in train_dataset[label_column]:
                         all_labels.extend(label_seq)
                     num_labels = len(set(all_labels))
             elif hasattr(train_dataset.features[label_column], "names"):
-                # Regular ClassLabel feature
                 label_names = train_dataset.features[label_column].names
                 num_labels = len(label_names)
             else:
-                # No names, infer from data
                 if config.type == "token_classification":
-                    # Flatten all label sequences to get unique labels
                     all_labels = []
                     for label_seq in train_dataset[label_column]:
                         all_labels.extend(label_seq)
@@ -333,14 +378,21 @@ class TaskRunner:
                     num_labels = len(set(train_dataset[label_column]))
 
         runs = config.runs or self.config.runs
-        all_metrics = []
+        completed_runs = self.check_completed_runs(config.name, config.type)
 
-        for run in range(runs):
+        if completed_runs > 0:
+            if completed_runs >= runs:
+                logger.info(f"All {runs} runs already completed for {config.name}")
+                return self.load_final_result(config.name, config.type)
+            logger.info(f"Resuming from run {completed_runs + 1}/{runs} for {config.name}")
+
+        all_metrics = self.load_existing_metrics(config.name, config.type) if completed_runs > 0 else []
+
+        for run in range(completed_runs, runs):
             logger.info(f"Run {run + 1}/{runs} for {config.name}")
 
             set_seed(self.config.seed + run)
 
-            # Load fresh model for each run
             if config.type == "token_classification":
                 self.load_token_classification_model(num_labels, label_names)
                 train_dataset_run = self.preprocess_token_classification(train_dataset, config)
@@ -359,14 +411,13 @@ class TaskRunner:
                 eval_dataset_run = self.preprocess_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_regression
                 data_collator = DataCollatorWithPadding(self.tokenizer)
-            else:  # classification
+            else:
                 self.load_model_and_tokenizer(num_labels, label_names)
                 train_dataset_run = self.preprocess_classification(train_dataset, config)
                 eval_dataset_run = self.preprocess_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_classification
                 data_collator = DataCollatorWithPadding(self.tokenizer)
 
-            # Remove only the text columns that were actually used
             text_columns = []
             if config.text_column and config.text_column in train_dataset_run.column_names:
                 text_columns.append(config.text_column)
@@ -386,7 +437,7 @@ class TaskRunner:
                     eval_dataset_run = eval_dataset_run.remove_columns(col)
 
             training_args = TrainingArguments(
-                output_dir=f"{self.config.output_dir}/{config.name}_run_{run}",
+                output_dir=f"{self.unique_output_dir}/{config.name}_run_{run}",
                 learning_rate=config.learning_rate,
                 per_device_train_batch_size=config.batch_size,
                 per_device_eval_batch_size=config.batch_size,
@@ -412,11 +463,29 @@ class TaskRunner:
             metrics = trainer.evaluate()
             all_metrics.append(metrics)
 
+            run_result = {
+                "dataset": config.name,
+                "type": config.type,
+                "num_labels": num_labels,
+                "run": run + 1,
+                "total_runs": runs,
+                "metrics": metrics,
+                "model": self.config.model,
+                "config_hash": self.config_hash,
+                "timestamp": time.time(),
+            }
+            self.save_run_result(run_result)
+
         avg_metrics = {}
         for key in all_metrics[0].keys():
             values = [m[key] for m in all_metrics]
             avg_metrics[f"{key}_mean"] = np.mean(values)
             avg_metrics[f"{key}_std"] = np.std(values)
+
+        main_score = self.get_main_score(config.type, avg_metrics)
+        avg_metrics["main_score"] = main_score["name"]
+        avg_metrics["main_score_mean"] = main_score["mean"]
+        avg_metrics["main_score_std"] = main_score["std"]
 
         result = {
             "dataset": config.name,
@@ -424,15 +493,83 @@ class TaskRunner:
             "num_labels": num_labels,
             "runs": runs,
             "metrics": avg_metrics,
+            "model": self.config.model,
+            "config_hash": self.config_hash,
+            "timestamp": time.time(),
         }
 
-        self.save_result(result)
+        self.save_final_result(result)
         return result
 
-    def save_result(self, result: Dict[str, Any]):
-        output_file = Path(self.config.output_dir) / "results.jsonl"
-        with open(output_file, "a") as f:
+    def check_completed_runs(self, dataset_name: str, task_type: str) -> int:
+        if not self.results_file.exists():
+            return 0
+
+        completed_runs = 0
+        for line in self.results_file.readlines():
+            result = json.loads(line.strip())
+            if (result.get("dataset") == dataset_name and
+                result.get("type") == task_type and
+                "run" in result):
+                completed_runs = max(completed_runs, result["run"])
+
+        return completed_runs
+
+    def load_existing_metrics(self, dataset_name: str, task_type: str) -> List[Dict[str, Any]]:
+        if not self.results_file.exists():
+            return []
+
+        metrics = []
+        for line in self.results_file.readlines():
+            result = json.loads(line.strip())
+            if (result.get("dataset") == dataset_name and
+                result.get("type") == task_type and
+                "run" in result):
+                metrics.append(result["metrics"])
+
+        return metrics
+
+    def load_final_result(self, dataset_name: str, task_type: str) -> Dict[str, Any]:
+        if not self.results_file.exists():
+            return {}
+
+        for line in reversed(self.results_file.readlines()):
+            result = json.loads(line.strip())
+            if (result.get("dataset") == dataset_name and
+                result.get("type") == task_type and
+                "run" not in result):
+                return result
+
+        return {}
+
+    def save_run_result(self, result: Dict[str, Any]):
+        with open(self.results_file, "a") as f:
             f.write(json.dumps(result) + "\n")
+
+    def save_final_result(self, result: Dict[str, Any]):
+        with open(self.results_file, "a") as f:
+            f.write(json.dumps(result) + "\n")
+
+    def get_main_score(self, task_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        if task_type == "classification" or task_type == "pair_classification" or task_type == "token_classification":
+            score_name = "accuracy"
+        elif task_type == "regression":
+            score_name = "r2"
+        else:
+            score_name = list(metrics.keys())[0].replace("_mean", "")
+
+        mean_key = f"eval_{score_name}_mean"
+        std_key = f"eval_{score_name}_std"
+
+        if mean_key not in metrics:
+            mean_key = f"{score_name}_mean"
+            std_key = f"{score_name}_std"
+
+        return {
+            "name": score_name,
+            "mean": float(metrics.get(mean_key, 0)),
+            "std": float(metrics.get(std_key, 0)),
+        }
 
     def run_all(self):
         results = []
@@ -448,21 +585,21 @@ class TaskRunner:
         table = Table(title="Evaluation Results")
         table.add_column("Dataset", style="cyan", no_wrap=True)
         table.add_column("Type", style="magenta")
-        table.add_column("Metric", style="green")
+        table.add_column("Main Score", style="green")
         table.add_column("Mean ± Std", style="yellow")
 
         for result in results:
             metrics = result["metrics"]
-            for key, value in metrics.items():
-                if key.endswith("_mean"):
-                    metric_name = key[:-5]
-                    std_value = metrics.get(f"{metric_name}_std", 0)
-                    table.add_row(
-                        result["dataset"],
-                        result["type"],
-                        metric_name,
-                        f"{value:.4f} ± {std_value:.4f}",
-                    )
+            if "main_score_mean" in metrics:
+                score_name = metrics.get("main_score", "score")
+                mean_val = metrics["main_score_mean"]
+                std_val = metrics["main_score_std"]
+                table.add_row(
+                    result["dataset"],
+                    result["type"],
+                    score_name,
+                    f"{mean_val:.4f} ± {std_val:.4f}",
+                )
 
         console.print(table)
 
@@ -538,24 +675,56 @@ def create_example_config():
 
 
 def main():
-    if len(sys.argv) < 2:
-        console.print("[red]Usage: encoder_eval.py <config.yaml> [--runs N][/red]")
-        console.print("[cyan]Create example config: encoder_eval.py --create-config > config.yaml[/cyan]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Evaluate encoder models on various tasks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples:\n"
+               "  encoder_eval.py config.yaml\n"
+               "  encoder_eval.py config.yaml --model bert-base-uncased --runs 5\n"
+               "  encoder_eval.py --create-config > config.yaml"
+    )
 
-    if sys.argv[1] == "--create-config":
+    parser.add_argument("config", nargs="?", help="Path to config YAML file")
+    parser.add_argument("--model", help="Override model name")
+    parser.add_argument("--runs", type=int, help="Override number of runs")
+    parser.add_argument("--seed", type=int, help="Override random seed")
+    parser.add_argument("--output-dir", help="Override output directory")
+    parser.add_argument("--freeze-base", action="store_true", help="Freeze base model parameters")
+    parser.add_argument("--no-freeze-base", action="store_true", help="Don't freeze base model parameters")
+    parser.add_argument("--no-resume", action="store_true", help="Don't resume from existing results")
+    parser.add_argument("--create-config", action="store_true", help="Create example config")
+
+    args = parser.parse_args()
+
+    if args.create_config:
         console.print(create_example_config())
         sys.exit(0)
 
-    config_path = sys.argv[1]
-    config = load_config(config_path)
+    if not args.config:
+        parser.error("config file is required unless --create-config is specified")
 
-    if "--runs" in sys.argv:
-        idx = sys.argv.index("--runs")
-        if idx + 1 < len(sys.argv):
-            config.runs = int(sys.argv[idx + 1])
+    config = load_config(args.config)
+
+    if args.model:
+        config.model = args.model
+    if args.runs:
+        config.runs = args.runs
+    if args.seed:
+        config.seed = args.seed
+    if args.output_dir:
+        config.output_dir = args.output_dir
+    if args.freeze_base:
+        config.freeze_base = True
+    elif args.no_freeze_base:
+        config.freeze_base = False
 
     runner = TaskRunner(config)
+
+    if args.no_resume and runner.results_file.exists():
+        backup_file = runner.results_file.with_suffix('.jsonl.bak')
+        runner.results_file.rename(backup_file)
+        logger.info(f"Existing results backed up to {backup_file}")
+
     runner.run_all()
 
 
