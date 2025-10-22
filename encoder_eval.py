@@ -3,32 +3,29 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import yaml
-from datasets import Dataset, DatasetDict, load_dataset, concatenate_datasets
+from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset
 from evaluate import load as load_metric
 from rich.console import Console
 from rich.table import Table
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
     AutoModelForTokenClassification,
     AutoTokenizer,
-    DataCollatorWithPadding,
     DataCollatorForTokenClassification,
+    DataCollatorWithPadding,
     Trainer,
     TrainingArguments,
+    set_seed,
 )
-from transformers import set_seed
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -86,7 +83,7 @@ class EvalConfig:
             "runs": self.runs,
             "seed": self.seed,
             "datasets": [
-                {k: v for k, v in d.__dict__.items() if not k.startswith('_')}
+                {k: v for k, v in d.__dict__.items() if not k.startswith("_")}
                 for d in self.datasets
             ],
         }
@@ -98,13 +95,13 @@ class EvalConfig:
 
     def get_model_short_name(self) -> str:
         """Extract short model name from path."""
-        model_path = self.model.rstrip('/')
+        model_path = self.model.rstrip("/")
 
         if Path(model_path).exists():
             folder_name = Path(model_path).name
             return f"localhost__{folder_name}"
         else:
-            return model_path.replace('/', '__')
+            return model_path.replace("/", "__")
 
 
 class TaskRunner:
@@ -115,7 +112,9 @@ class TaskRunner:
         self.config_hash = config.get_hash()
         self.model_short_name = config.get_model_short_name()
 
-        self.unique_output_dir = Path(config.output_dir) / self.model_short_name / self.config_hash
+        self.unique_output_dir = (
+            Path(config.output_dir) / self.model_short_name / self.config_hash
+        )
         self.results_file = self.unique_output_dir / "results.jsonl"
         self.config_file = self.unique_output_dir / "config.yaml"
 
@@ -123,7 +122,9 @@ class TaskRunner:
         self.unique_output_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.config_file.exists():
-            self.config_file.write_text(yaml.dump(config.to_dict(), default_flow_style=False))
+            self.config_file.write_text(
+                yaml.dump(config.to_dict(), default_flow_style=False)
+            )
 
         logging.basicConfig(
             format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -136,31 +137,36 @@ class TaskRunner:
     def ensure_float_labels(self, dataset: Dataset, label_column: str) -> Dataset:
         """Convert label column to float32 for regression tasks."""
         from datasets import Value
+
         new_features = dataset.features.copy()
-        new_features[label_column] = Value('float32')
+        new_features[label_column] = Value("float32")
         return dataset.cast(new_features)
 
-    def load_model_and_tokenizer(self, num_labels: int, label_names: Optional[List[str]] = None, problem_type: Optional[str] = None):
+    def load_model_and_tokenizer(
+        self,
+        num_labels: int,
+        label_names: Optional[List[str]] = None,
+        problem_type: Optional[str] = None,
+    ):
         logger.info(f"Loading model and tokenizer: {self.config.model}")
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.model)
 
         config_kwargs = {}
         if label_names:
-            config_kwargs.update({
-                "id2label": {str(i): name for i, name in enumerate(label_names)},
-                "label2id": {name: i for i, name in enumerate(label_names)},
-            })
+            config_kwargs.update(
+                {
+                    "id2label": {str(i): name for i, name in enumerate(label_names)},
+                    "label2id": {name: i for i, name in enumerate(label_names)},
+                }
+            )
         else:
             config_kwargs["num_labels"] = num_labels
 
         if problem_type:
             config_kwargs["problem_type"] = problem_type
 
-        model_config = AutoConfig.from_pretrained(
-            self.config.model,
-            **config_kwargs
-        )
+        model_config = AutoConfig.from_pretrained(self.config.model, **config_kwargs)
 
         if self.config.freeze_base:
             self.base_model = AutoModelForSequenceClassification.from_pretrained(
@@ -179,22 +185,28 @@ class TaskRunner:
 
         self.set_effective_max_length()
 
-    def load_token_classification_model(self, num_labels: int, label_names: Optional[List[str]] = None):
+    def load_token_classification_model(
+        self, num_labels: int, label_names: Optional[List[str]] = None
+    ):
         logger.info(f"Loading token classification model: {self.config.model}")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.model)
+        config = AutoConfig.from_pretrained(self.config.model)
+        tokenizer_name_or_path = self.config.model
 
-        if label_names:
-            model_config = AutoConfig.from_pretrained(
-                self.config.model,
-                id2label={str(i): name for i, name in enumerate(label_names)},
-                label2id={name: i for i, name in enumerate(label_names)},
+        if config.model_type in {"bloom", "gpt2", "roberta", "deberta"}:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_name_or_path,
+                add_prefix_space=True,
             )
         else:
-            model_config = AutoConfig.from_pretrained(
-                self.config.model,
-                num_labels=num_labels,
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
+
+        if label_names:
+            config.id2label = {str(i): name for i, name in enumerate(label_names)}
+            config.label2id = {name: i for i, name in enumerate(label_names)}
+        else:
+            config.num_labels = num_labels
+        model_config = config
 
         self.model = AutoModelForTokenClassification.from_pretrained(
             self.config.model,
@@ -210,21 +222,31 @@ class TaskRunner:
 
     def set_effective_max_length(self):
         if self.config.max_length is None:
-            if hasattr(self.model.config, 'max_position_embeddings'):
+            if hasattr(self.model.config, "max_position_embeddings"):
                 self.config.max_length = self.model.config.max_position_embeddings - 2
-            elif hasattr(self.tokenizer, 'model_max_length') and self.tokenizer.model_max_length > 0:
+            elif (
+                hasattr(self.tokenizer, "model_max_length")
+                and self.tokenizer.model_max_length > 0
+            ):
                 self.config.max_length = self.tokenizer.model_max_length - 2
             else:
                 self.config.max_length = 512
 
-    def preprocess_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
+    def preprocess_classification(
+        self, dataset: Dataset, config: DatasetConfig
+    ) -> Dataset:
         if not hasattr(dataset.features[config.label_column], "names"):
             unique_labels = sorted(set(dataset[config.label_column]))
             if all(isinstance(label, str) for label in unique_labels):
                 label_to_id = {label: i for i, label in enumerate(unique_labels)}
 
                 def convert_labels(examples):
-                    return {"labels": [label_to_id[label] for label in examples[config.label_column]]}
+                    return {
+                        "labels": [
+                            label_to_id[label]
+                            for label in examples[config.label_column]
+                        ]
+                    }
 
                 dataset = dataset.map(convert_labels, batched=True)
 
@@ -237,7 +259,9 @@ class TaskRunner:
 
         return dataset.map(tokenize, batched=True)
 
-    def preprocess_pair_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
+    def preprocess_pair_classification(
+        self, dataset: Dataset, config: DatasetConfig
+    ) -> Dataset:
         def tokenize(examples):
             return self.tokenizer(
                 examples[config.text1_column],
@@ -248,7 +272,9 @@ class TaskRunner:
 
         return dataset.map(tokenize, batched=True)
 
-    def preprocess_token_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
+    def preprocess_token_classification(
+        self, dataset: Dataset, config: DatasetConfig
+    ) -> Dataset:
         all_labels = set()
         for label_seq in dataset[config.tags_column]:
             all_labels.update(label_seq)
@@ -312,18 +338,25 @@ class TaskRunner:
             "r2": r2,
         }
 
-
     def compute_metrics_token_classification(self, eval_pred):
         metric = load_metric("seqeval")
         predictions, labels = eval_pred
         predictions = np.argmax(predictions, axis=2)
 
         true_predictions = [
-            [self.model.config.id2label[str(p)] for (p, l) in zip(prediction, label) if l != -100]
+            [
+                self.model.config.id2label[str(p)]
+                for (p, l) in zip(prediction, label)
+                if l != -100
+            ]
             for prediction, label in zip(predictions, labels)
         ]
         true_labels = [
-            [self.model.config.id2label[str(l)] for (p, l) in zip(prediction, label) if l != -100]
+            [
+                self.model.config.id2label[str(l)]
+                for (p, l) in zip(prediction, label)
+                if l != -100
+            ]
             for prediction, label in zip(predictions, labels)
         ]
 
@@ -347,7 +380,9 @@ class TaskRunner:
                 for subset in config.subset:
                     dataset_dict = load_dataset(config.name, name=subset)
                     if isinstance(dataset_dict, Dataset):
-                        dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+                        dataset_dict = DatasetDict(
+                            {"train": dataset_dict, "validation": dataset_dict}
+                        )
                     train_datasets.append(dataset_dict[config.train_split])
                     eval_datasets.append(dataset_dict[config.eval_split])
                 train_dataset = concatenate_datasets(train_datasets)
@@ -355,17 +390,25 @@ class TaskRunner:
             else:
                 dataset_dict = load_dataset(config.name, name=config.subset)
                 if isinstance(dataset_dict, Dataset):
-                    dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+                    dataset_dict = DatasetDict(
+                        {"train": dataset_dict, "validation": dataset_dict}
+                    )
                 train_dataset = dataset_dict[config.train_split]
                 eval_dataset = dataset_dict[config.eval_split]
         else:
             dataset_dict = load_dataset(config.name)
             if isinstance(dataset_dict, Dataset):
-                dataset_dict = DatasetDict({"train": dataset_dict, "validation": dataset_dict})
+                dataset_dict = DatasetDict(
+                    {"train": dataset_dict, "validation": dataset_dict}
+                )
             train_dataset = dataset_dict[config.train_split]
             eval_dataset = dataset_dict[config.eval_split]
 
-        label_column = config.tags_column if config.type == "token_classification" else config.label_column
+        label_column = (
+            config.tags_column
+            if config.type == "token_classification"
+            else config.label_column
+        )
 
         if config.type == "regression":
             num_labels = 1
@@ -403,15 +446,23 @@ class TaskRunner:
                         label_names = unique_labels
 
         runs = config.runs or self.config.runs
-        completed_runs = self.check_completed_runs(config.name, config.type, config.subset)
+        completed_runs = self.check_completed_runs(
+            config.name, config.type, config.subset
+        )
 
         if completed_runs > 0:
             if completed_runs >= runs:
                 logger.info(f"All {runs} runs already completed for {config.name}")
                 return self.load_final_result(config.name, config.type, config.subset)
-            logger.info(f"Resuming from run {completed_runs + 1}/{runs} for {config.name}")
+            logger.info(
+                f"Resuming from run {completed_runs + 1}/{runs} for {config.name}"
+            )
 
-        all_metrics = self.load_existing_metrics(config.name, config.type, config.subset) if completed_runs > 0 else []
+        all_metrics = (
+            self.load_existing_metrics(config.name, config.type, config.subset)
+            if completed_runs > 0
+            else []
+        )
 
         for run in range(completed_runs, runs):
             logger.info(f"Run {run + 1}/{runs} for {config.name}")
@@ -420,39 +471,70 @@ class TaskRunner:
 
             if config.type == "token_classification":
                 self.load_token_classification_model(num_labels, label_names)
-                train_dataset_run = self.preprocess_token_classification(train_dataset, config)
-                eval_dataset_run = self.preprocess_token_classification(eval_dataset, config)
+                train_dataset_run = self.preprocess_token_classification(
+                    train_dataset, config
+                )
+                eval_dataset_run = self.preprocess_token_classification(
+                    eval_dataset, config
+                )
                 compute_metrics = self.compute_metrics_token_classification
-                data_collator = DataCollatorForTokenClassification(self.tokenizer, pad_to_multiple_of=8)
+                data_collator = DataCollatorForTokenClassification(
+                    self.tokenizer, pad_to_multiple_of=8
+                )
             elif config.type == "pair_classification":
                 self.load_model_and_tokenizer(num_labels, label_names)
-                train_dataset_run = self.preprocess_pair_classification(train_dataset, config)
-                eval_dataset_run = self.preprocess_pair_classification(eval_dataset, config)
+                train_dataset_run = self.preprocess_pair_classification(
+                    train_dataset, config
+                )
+                eval_dataset_run = self.preprocess_pair_classification(
+                    eval_dataset, config
+                )
                 compute_metrics = self.compute_metrics_classification
                 data_collator = DataCollatorWithPadding(self.tokenizer)
             elif config.type == "regression":
-                self.load_model_and_tokenizer(num_labels, label_names, problem_type="regression")
-                train_dataset_run = self.preprocess_classification(train_dataset, config)
+                self.load_model_and_tokenizer(
+                    num_labels, label_names, problem_type="regression"
+                )
+                train_dataset_run = self.preprocess_classification(
+                    train_dataset, config
+                )
                 eval_dataset_run = self.preprocess_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_regression
                 data_collator = DataCollatorWithPadding(self.tokenizer)
             else:
                 self.load_model_and_tokenizer(num_labels, label_names)
-                train_dataset_run = self.preprocess_classification(train_dataset, config)
+                train_dataset_run = self.preprocess_classification(
+                    train_dataset, config
+                )
                 eval_dataset_run = self.preprocess_classification(eval_dataset, config)
                 compute_metrics = self.compute_metrics_classification
                 data_collator = DataCollatorWithPadding(self.tokenizer)
 
             text_columns = []
-            if config.text_column and config.text_column in train_dataset_run.column_names:
+            if (
+                config.text_column
+                and config.text_column in train_dataset_run.column_names
+            ):
                 text_columns.append(config.text_column)
-            if config.text1_column and config.text1_column in train_dataset_run.column_names:
+            if (
+                config.text1_column
+                and config.text1_column in train_dataset_run.column_names
+            ):
                 text_columns.append(config.text1_column)
-            if config.text2_column and config.text2_column in train_dataset_run.column_names:
+            if (
+                config.text2_column
+                and config.text2_column in train_dataset_run.column_names
+            ):
                 text_columns.append(config.text2_column)
-            if config.tokens_column and config.tokens_column in train_dataset_run.column_names:
+            if (
+                config.tokens_column
+                and config.tokens_column in train_dataset_run.column_names
+            ):
                 text_columns.append(config.tokens_column)
-            if config.tags_column and config.tags_column in train_dataset_run.column_names:
+            if (
+                config.tags_column
+                and config.tags_column in train_dataset_run.column_names
+            ):
                 text_columns.append(config.tags_column)
 
             for col in text_columns:
@@ -528,7 +610,9 @@ class TaskRunner:
         self.save_final_result(result)
         return result
 
-    def check_completed_runs(self, dataset_name: str, task_type: str, subset=None) -> int:
+    def check_completed_runs(
+        self, dataset_name: str, task_type: str, subset=None
+    ) -> int:
         if not self.results_file.exists():
             return 0
 
@@ -536,15 +620,19 @@ class TaskRunner:
         with open(self.results_file) as f:
             for line in f:
                 result = json.loads(line.strip())
-                if (result.get("dataset") == dataset_name and
-                    result.get("type") == task_type and
-                    result.get("subset") == subset and
-                    "run" in result):
+                if (
+                    result.get("dataset") == dataset_name
+                    and result.get("type") == task_type
+                    and result.get("subset") == subset
+                    and "run" in result
+                ):
                     completed_runs = max(completed_runs, result["run"])
 
         return completed_runs
 
-    def load_existing_metrics(self, dataset_name: str, task_type: str, subset=None) -> List[Dict[str, Any]]:
+    def load_existing_metrics(
+        self, dataset_name: str, task_type: str, subset=None
+    ) -> List[Dict[str, Any]]:
         if not self.results_file.exists():
             return []
 
@@ -552,15 +640,19 @@ class TaskRunner:
         with open(self.results_file) as f:
             for line in f:
                 result = json.loads(line.strip())
-                if (result.get("dataset") == dataset_name and
-                    result.get("type") == task_type and
-                    result.get("subset") == subset and
-                    "run" in result):
+                if (
+                    result.get("dataset") == dataset_name
+                    and result.get("type") == task_type
+                    and result.get("subset") == subset
+                    and "run" in result
+                ):
                     metrics.append(result["metrics"])
 
         return metrics
 
-    def load_final_result(self, dataset_name: str, task_type: str, subset=None) -> Dict[str, Any]:
+    def load_final_result(
+        self, dataset_name: str, task_type: str, subset=None
+    ) -> Dict[str, Any]:
         if not self.results_file.exists():
             return {}
 
@@ -569,10 +661,12 @@ class TaskRunner:
 
         for line in reversed(lines):
             result = json.loads(line.strip())
-            if (result.get("dataset") == dataset_name and
-                result.get("type") == task_type and
-                result.get("subset") == subset and
-                "run" not in result):
+            if (
+                result.get("dataset") == dataset_name
+                and result.get("type") == task_type
+                and result.get("subset") == subset
+                and "run" not in result
+            ):
                 return result
 
         return {}
@@ -586,7 +680,11 @@ class TaskRunner:
             f.write(json.dumps(result) + "\n")
 
     def get_main_score(self, task_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
-        if task_type == "classification" or task_type == "pair_classification" or task_type == "token_classification":
+        if (
+            task_type == "classification"
+            or task_type == "pair_classification"
+            or task_type == "token_classification"
+        ):
             score_name = "accuracy"
         elif task_type == "regression":
             score_name = "r2"
@@ -726,21 +824,33 @@ def main():
         description="Evaluate encoder models on various tasks",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Examples:\n"
-               "  encoder_eval.py config.yaml\n"
-               "  encoder_eval.py config.yaml --model bert-base-uncased --runs 5\n"
-               "  encoder_eval.py --create-config > config.yaml"
+        "  encoder_eval.py config.yaml\n"
+        "  encoder_eval.py config.yaml --model bert-base-uncased --runs 5\n"
+        "  encoder_eval.py --create-config > config.yaml",
     )
 
     parser.add_argument("config", nargs="?", help="Path to config YAML file")
     parser.add_argument("--model", help="Override model name")
-    parser.add_argument("--max-length", type=int, help="Override maximum sequence length")
+    parser.add_argument(
+        "--max-length", type=int, help="Override maximum sequence length"
+    )
     parser.add_argument("--runs", type=int, help="Override number of runs")
     parser.add_argument("--seed", type=int, help="Override random seed")
     parser.add_argument("--output-dir", help="Override output directory")
-    parser.add_argument("--freeze-base", action="store_true", help="Freeze base model parameters")
-    parser.add_argument("--no-freeze-base", action="store_true", help="Don't freeze base model parameters")
-    parser.add_argument("--no-resume", action="store_true", help="Don't resume from existing results")
-    parser.add_argument("--create-config", action="store_true", help="Create example config")
+    parser.add_argument(
+        "--freeze-base", action="store_true", help="Freeze base model parameters"
+    )
+    parser.add_argument(
+        "--no-freeze-base",
+        action="store_true",
+        help="Don't freeze base model parameters",
+    )
+    parser.add_argument(
+        "--no-resume", action="store_true", help="Don't resume from existing results"
+    )
+    parser.add_argument(
+        "--create-config", action="store_true", help="Create example config"
+    )
 
     args = parser.parse_args()
 
@@ -771,7 +881,7 @@ def main():
     runner = TaskRunner(config)
 
     if args.no_resume and runner.results_file.exists():
-        backup_file = runner.results_file.with_suffix('.jsonl.bak')
+        backup_file = runner.results_file.with_suffix(".jsonl.bak")
         runner.results_file.rename(backup_file)
         logger.info(f"Existing results backed up to {backup_file}")
 
