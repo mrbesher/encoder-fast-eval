@@ -249,6 +249,11 @@ class TaskRunner:
                     }
 
                 dataset = dataset.map(convert_labels, batched=True)
+            else:
+                def rename_labels(examples):
+                    return {"labels": examples[config.label_column]}
+
+                dataset = dataset.map(rename_labels, batched=True)
 
         def tokenize(examples):
             return self.tokenizer(
