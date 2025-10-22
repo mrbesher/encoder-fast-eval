@@ -46,7 +46,6 @@ class DatasetConfig:
     text2_column: Optional[str] = None
     tokens_column: Optional[str] = None
     tags_column: Optional[str] = None
-    max_length: int = 128
     epochs: int = 3
     learning_rate: float = 2e-5
     batch_size: int = 16
@@ -55,7 +54,7 @@ class DatasetConfig:
 
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
-            if k in ["learning_rate", "batch_size", "max_length", "epochs", "runs", "seed"]:
+            if k in ["learning_rate", "batch_size", "epochs", "runs", "seed"]:
                 setattr(self, k, float(v) if k == "learning_rate" else int(v))
             else:
                 setattr(self, k, v)
@@ -67,14 +66,15 @@ class EvalConfig:
     runs: int = 3
     seed: int = 42
     output_dir: str = "results"
+    max_length: Optional[int] = None
     datasets: List[DatasetConfig] = []
 
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             if k == "datasets":
                 self.datasets = [DatasetConfig(**d) for d in v]
-            elif k in ["runs", "seed"]:
-                setattr(self, k, int(v))
+            elif k in ["runs", "seed", "max_length"]:
+                setattr(self, k, int(v) if v is not None else None)
             else:
                 setattr(self, k, v)
 
@@ -98,7 +98,13 @@ class EvalConfig:
 
     def get_model_short_name(self) -> str:
         """Extract short model name from path."""
-        return self.model.split('/')[-1]
+        model_path = self.model.rstrip('/')
+
+        if Path(model_path).exists():
+            folder_name = Path(model_path).name
+            return f"localhost__{folder_name}"
+        else:
+            return model_path.replace('/', '__')
 
 
 class TaskRunner:
@@ -171,6 +177,8 @@ class TaskRunner:
                 config=model_config,
             )
 
+        self.set_effective_max_length()
+
     def load_token_classification_model(self, num_labels: int, label_names: Optional[List[str]] = None):
         logger.info(f"Loading token classification model: {self.config.model}")
 
@@ -198,6 +206,17 @@ class TaskRunner:
                 param.requires_grad = False
             logger.info("Frozen base model parameters")
 
+        self.set_effective_max_length()
+
+    def set_effective_max_length(self):
+        if self.config.max_length is None:
+            if hasattr(self.model.config, 'max_position_embeddings'):
+                self.config.max_length = self.model.config.max_position_embeddings
+            elif hasattr(self.tokenizer, 'model_max_length') and self.tokenizer.model_max_length > 0:
+                self.config.max_length = self.tokenizer.model_max_length
+            else:
+                self.config.max_length = 512
+
     def preprocess_classification(self, dataset: Dataset, config: DatasetConfig) -> Dataset:
         if not hasattr(dataset.features[config.label_column], "names"):
             unique_labels = sorted(set(dataset[config.label_column]))
@@ -213,7 +232,7 @@ class TaskRunner:
             return self.tokenizer(
                 examples[config.text_column],
                 truncation=True,
-                max_length=config.max_length,
+                max_length=self.config.max_length,
             )
 
         return dataset.map(tokenize, batched=True)
@@ -224,7 +243,7 @@ class TaskRunner:
                 examples[config.text1_column],
                 examples[config.text2_column],
                 truncation=True,
-                max_length=config.max_length,
+                max_length=self.config.max_length,
             )
 
         return dataset.map(tokenize, batched=True)
@@ -246,7 +265,7 @@ class TaskRunner:
             tokenized_inputs = self.tokenizer(
                 examples[config.tokens_column],
                 truncation=True,
-                max_length=config.max_length,
+                max_length=self.config.max_length,
                 is_split_into_words=True,
             )
 

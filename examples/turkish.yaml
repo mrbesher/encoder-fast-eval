@@ -4,7 +4,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/SentiTurca
   subset: e-commerce
   text_column: text
@@ -15,7 +14,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/SentiTurca
   subset: hate
   text_column: text
@@ -26,7 +24,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/SentiTurca
   subset: movies
   text_column: text
@@ -37,7 +34,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/TrCOLA
   text_column: variation
   train_split: train
@@ -47,7 +43,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/TurkishHateMap
   subset: [animals, cities, ethnicity, lgbt, misogyny, occupations, political-orientation, politics, refugees, religion, sects, veganism]
   text_column: text
@@ -58,7 +53,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/MusteriYorumlari
   text_column: text
   train_split: train
@@ -68,7 +62,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/BuyukSinema
   text_column: text
   train_split: train
@@ -78,7 +71,6 @@ datasets:
   eval_split: test
   label_column: label
   learning_rate: 2.0e-05
-  max_length: 128
   name: turkish-nlp-suite/turkish-wikiNER
   tags_column: tags
   text_column: text
@@ -87,6 +79,6 @@ datasets:
   type: token_classification
 freeze_base: true
 model: dbmdz/bert-base-turkish-cased
-output_dir: results_turkish
+output_dir: results
 runs: 3
 seed: 42
