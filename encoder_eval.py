@@ -211,9 +211,9 @@ class TaskRunner:
     def set_effective_max_length(self):
         if self.config.max_length is None:
             if hasattr(self.model.config, 'max_position_embeddings'):
-                self.config.max_length = self.model.config.max_position_embeddings
+                self.config.max_length = self.model.config.max_position_embeddings - 2
             elif hasattr(self.tokenizer, 'model_max_length') and self.tokenizer.model_max_length > 0:
-                self.config.max_length = self.tokenizer.model_max_length
+                self.config.max_length = self.tokenizer.model_max_length - 2
             else:
                 self.config.max_length = 512
 
