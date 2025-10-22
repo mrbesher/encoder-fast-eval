@@ -397,15 +397,15 @@ class TaskRunner:
                     num_labels = len(set(train_dataset[label_column]))
 
         runs = config.runs or self.config.runs
-        completed_runs = self.check_completed_runs(config.name, config.type)
+        completed_runs = self.check_completed_runs(config.name, config.type, config.subset)
 
         if completed_runs > 0:
             if completed_runs >= runs:
                 logger.info(f"All {runs} runs already completed for {config.name}")
-                return self.load_final_result(config.name, config.type)
+                return self.load_final_result(config.name, config.type, config.subset)
             logger.info(f"Resuming from run {completed_runs + 1}/{runs} for {config.name}")
 
-        all_metrics = self.load_existing_metrics(config.name, config.type) if completed_runs > 0 else []
+        all_metrics = self.load_existing_metrics(config.name, config.type, config.subset) if completed_runs > 0 else []
 
         for run in range(completed_runs, runs):
             logger.info(f"Run {run + 1}/{runs} for {config.name}")
@@ -484,6 +484,7 @@ class TaskRunner:
 
             run_result = {
                 "dataset": config.name,
+                "subset": config.subset,
                 "type": config.type,
                 "num_labels": num_labels,
                 "run": run + 1,
@@ -508,6 +509,7 @@ class TaskRunner:
 
         result = {
             "dataset": config.name,
+            "subset": config.subset,
             "type": config.type,
             "num_labels": num_labels,
             "runs": runs,
@@ -520,7 +522,7 @@ class TaskRunner:
         self.save_final_result(result)
         return result
 
-    def check_completed_runs(self, dataset_name: str, task_type: str) -> int:
+    def check_completed_runs(self, dataset_name: str, task_type: str, subset=None) -> int:
         if not self.results_file.exists():
             return 0
 
@@ -530,12 +532,13 @@ class TaskRunner:
                 result = json.loads(line.strip())
                 if (result.get("dataset") == dataset_name and
                     result.get("type") == task_type and
+                    result.get("subset") == subset and
                     "run" in result):
                     completed_runs = max(completed_runs, result["run"])
 
         return completed_runs
 
-    def load_existing_metrics(self, dataset_name: str, task_type: str) -> List[Dict[str, Any]]:
+    def load_existing_metrics(self, dataset_name: str, task_type: str, subset=None) -> List[Dict[str, Any]]:
         if not self.results_file.exists():
             return []
 
@@ -545,12 +548,13 @@ class TaskRunner:
                 result = json.loads(line.strip())
                 if (result.get("dataset") == dataset_name and
                     result.get("type") == task_type and
+                    result.get("subset") == subset and
                     "run" in result):
                     metrics.append(result["metrics"])
 
         return metrics
 
-    def load_final_result(self, dataset_name: str, task_type: str) -> Dict[str, Any]:
+    def load_final_result(self, dataset_name: str, task_type: str, subset=None) -> Dict[str, Any]:
         if not self.results_file.exists():
             return {}
 
@@ -561,6 +565,7 @@ class TaskRunner:
             result = json.loads(line.strip())
             if (result.get("dataset") == dataset_name and
                 result.get("type") == task_type and
+                result.get("subset") == subset and
                 "run" not in result):
                 return result
 
@@ -618,8 +623,20 @@ class TaskRunner:
                 score_name = metrics.get("main_score", "score")
                 mean_val = metrics["main_score_mean"]
                 std_val = metrics["main_score_std"]
+
+                dataset_name = result["dataset"]
+                if "/" in dataset_name:
+                    dataset_name = dataset_name.split("/")[-1]
+
+                display_name = dataset_name
+                if result.get("subset"):
+                    subset_str = str(result["subset"])
+                    if len(subset_str) > 6:
+                        subset_str = subset_str[:6] + "..."
+                    display_name += f" ({subset_str})"
+
                 table.add_row(
-                    result["dataset"],
+                    display_name,
                     result["type"],
                     score_name,
                     f"{mean_val:.4f} ± {std_val:.4f}",
