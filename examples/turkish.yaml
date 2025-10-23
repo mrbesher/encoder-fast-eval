@@ -96,7 +96,7 @@ datasets:
   batch_size: 16
   learning_rate: 2.0e-05
 - name: turkish-nlp-suite/vitamins-supplements-reviews
-  type: classification
+  type: regression
   text_column: text
   label_column: star
   train_split: train
