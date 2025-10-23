@@ -500,6 +500,8 @@ class TaskRunner:
                 self.load_model_and_tokenizer(
                     num_labels, label_names, problem_type="regression"
                 )
+                train_dataset = self.ensure_float_labels(train_dataset, config.label_column)
+                eval_dataset = self.ensure_float_labels(eval_dataset, config.label_column)
                 train_dataset_run = self.preprocess_classification(
                     train_dataset, config
                 )
