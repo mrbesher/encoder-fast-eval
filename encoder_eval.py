@@ -166,6 +166,9 @@ class TaskRunner:
         if problem_type:
             config_kwargs["problem_type"] = problem_type
 
+        if problem_type == "regression":
+            config_kwargs["num_labels"] = 1
+
         model_config = AutoConfig.from_pretrained(self.config.model, **config_kwargs)
 
         if self.config.freeze_base:
