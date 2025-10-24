@@ -334,10 +334,28 @@ class TaskRunner:
         predictions = predictions.squeeze()
         labels = labels.squeeze()
 
-        mse = mean_squared_error(labels, predictions)
+        valid_mask = ~(np.isnan(predictions) | np.isnan(labels))
+        nan_count = np.sum(np.isnan(predictions))
+        total_count = len(predictions)
+
+        if nan_count > 0:
+            logger.info(f"Found {nan_count}/{total_count} NaN predictions, filtering them out")
+
+        if not np.any(valid_mask):
+            return {
+                "mse": float('nan'),
+                "rmse": float('nan'),
+                "mae": float('nan'),
+                "r2": float('nan'),
+            }
+
+        clean_predictions = predictions[valid_mask]
+        clean_labels = labels[valid_mask]
+
+        mse = mean_squared_error(clean_labels, clean_predictions)
         rmse = np.sqrt(mse)
-        mae = mean_absolute_error(labels, predictions)
-        r2 = r2_score(labels, predictions)
+        mae = mean_absolute_error(clean_labels, clean_predictions)
+        r2 = r2_score(clean_labels, clean_predictions)
 
         return {
             "mse": mse,
