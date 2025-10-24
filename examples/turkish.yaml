@@ -68,15 +68,6 @@ datasets:
   epochs: 3
   batch_size: 16
   learning_rate: 2.0e-05
-- name: turkish-nlp-suite/MusteriYorumlari
-  type: classification
-  text_column: text
-  label_column: label
-  train_split: train
-  eval_split: test
-  epochs: 3
-  batch_size: 16
-  learning_rate: 2.0e-05
 - name: turkish-nlp-suite/BuyukSinema
   type: classification
   text_column: text
@@ -96,15 +87,6 @@ datasets:
   batch_size: 16
   learning_rate: 2.0e-05
 - name: turkish-nlp-suite/vitamins-supplements-reviews
-  type: regression
-  text_column: text
-  label_column: star
-  train_split: train
-  eval_split: test
-  epochs: 3
-  batch_size: 16
-  learning_rate: 2.0e-05
-- name: turkish-nlp-suite/beyazperde-top-300-movie-reviews
   type: regression
   text_column: text
   label_column: star
