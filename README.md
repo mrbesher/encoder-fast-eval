@@ -102,3 +102,39 @@ Results display in the CLI and save to `results/results.jsonl`:
 {"dataset": "iastate/onestop_english", "type": "classification", "num_labels": 3, "runs": 2, "metrics": {"eval_accuracy_mean": 0.3386, "eval_accuracy_std": 0.0123}}
 {"dataset": "nhull/125-tripadvisor-reviews", "type": "regression", "num_labels": 1, "runs": 3, "metrics": {"eval_rmse_mean": 0.4215, "eval_r2_mean": 0.6782}}
 ```
+
+## Analyzing Results
+
+The `analyze_results.py` script analyzes evaluation results across multiple models and datasets. It provides task averages and identifies best performers.
+
+### Usage
+
+```bash
+# Show task averages in console (default)
+uv run analyze_results.py
+
+# Show full table with all datasets
+uv run analyze_results.py console --full-table
+
+# Export to Excel (with formulas for automatic averages)
+uv run analyze_results.py excel -o results.xlsx
+
+# Export to other formats
+uv run analyze_results.py markdown > results.md
+uv run analyze_results.py csv > results.csv
+uv run analyze_results.py json > results.json
+```
+
+### Output Features
+
+- **Task Averages**: Automatically calculates average scores per task type (classification, regression, etc.)
+- **Best Performers**: Highlights the best-scoring model for each dataset and task type
+- **Excel Formulas**: The Excel output uses formulas that update automatically when values change
+- **Multiple Formats**: Supports console, Excel, Markdown, CSV, and JSON outputs
+
+### Options
+
+- `--results-dir`: Directory containing results (default: `results`)
+- `--full-table`: Show all datasets in console mode
+- `--no-bold`: Don't highlight best performers
+- `-o/--output`: Output file name (Excel format only)
