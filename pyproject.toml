@@ -1,7 +1,7 @@
 [project]
 name = "encoder-fast-eval"
 version = "0.1.0"
-description = "Fast evaluation of encoder models on NLP tasks by freezing base parameters and training only classification heads"
+description = "Evaluation of encoder models on NLP tasks"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,4 +14,12 @@ dependencies = [
     "seqeval>=1.2.2",
     "transformers>=4.57.1",
     "openpyxl>=3.1.5",
+    "torch==2.8.*",
+    "flash-attn==2.8.3",
 ]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
+
+[tool.uv.extra-build-variables]
+flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }

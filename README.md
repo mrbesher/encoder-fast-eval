@@ -111,18 +111,18 @@ The `analyze_results.py` script analyzes evaluation results across multiple mode
 
 ```bash
 # Show task averages in console (default)
-uv run analyze_results.py
+uv run scripts/analyze_results.py
 
 # Show full table with all datasets
-uv run analyze_results.py console --full-table
+uv run scripts/analyze_results.py console --full-table
 
 # Export to Excel (with formulas for automatic averages)
-uv run analyze_results.py excel -o results.xlsx
+uv run scripts/analyze_results.py excel -o results.xlsx
 
 # Export to other formats
-uv run analyze_results.py markdown > results.md
-uv run analyze_results.py csv > results.csv
-uv run analyze_results.py json > results.json
+uv run scripts/analyze_results.py markdown > results.md
+uv run scripts/analyze_results.py csv > results.csv
+uv run scripts/analyze_results.py json > results.json
 ```
 
 ### Output Features
@@ -138,3 +138,27 @@ uv run analyze_results.py json > results.json
 - `--full-table`: Show all datasets in console mode
 - `--no-bold`: Don't highlight best performers
 - `-o/--output`: Output file name (Excel format only)
+
+## Running on Modal
+
+For cloud GPU evaluation using [Modal](https://modal.com):
+
+### Setup
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install modal huggingface-hub
+```
+
+### Usage
+
+```bash
+# Single model
+modal run scripts/run_modal.py --models prajjwal1/bert-tiny --config ./examples/minimal.yaml
+
+# Mix Hugging Face and local models
+modal run scripts/run_modal.py --models prajjwal1/bert-tiny ~/my_local_model --config ./examples/minimal.yaml
+```
+
+Multiple models evaluate in parallel. After completion, automatically generates analysis in all formats (Excel, Markdown, CSV, JSON) saved to the results volume.
