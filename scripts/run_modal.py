@@ -147,7 +147,7 @@ def run_evaluation(model_paths: List[str], config_path: str, results_path: str):
 
         result = subprocess.run(cmd, capture_output=True, text=True, cwd="/root")
 
-        if fmt != "console":
+        if fmt not in ["console", "excel"]:
             with open(output_file, "w") as f:
                 f.write(result.stdout)
 
