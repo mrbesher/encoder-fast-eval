@@ -22,8 +22,7 @@ app = modal.App("encoder-fast-eval")
 
 image = (
     modal.Image.debian_slim()
-    .run_commands("pip install --upgrade uv")
-    .uv_sync()
+    .uv_sync(uv_version="0.9.5")
     .env({"TQDM_MININTERVAL": "5"})
     .add_local_dir(
         ".",

@@ -324,10 +324,21 @@ class TaskRunner:
         return dataset.map(tokenize_and_align_labels, batched=True)
 
     def compute_metrics_classification(self, eval_pred):
-        metric = load_metric("accuracy")
         predictions, labels = eval_pred
         predictions = np.argmax(predictions, axis=1)
-        return metric.compute(predictions=predictions, references=labels)
+
+        accuracy_metric = load_metric("accuracy")
+        f1_metric = load_metric("f1")
+        precision_metric = load_metric("precision")
+        recall_metric = load_metric("recall")
+
+        results = {}
+        results["accuracy"] = accuracy_metric.compute(predictions=predictions, references=labels)["accuracy"]
+        results["f1"] = f1_metric.compute(predictions=predictions, references=labels, average="macro")["f1"]
+        results["precision"] = precision_metric.compute(predictions=predictions, references=labels, average="macro")["precision"]
+        results["recall"] = recall_metric.compute(predictions=predictions, references=labels, average="macro")["recall"]
+
+        return results
 
     def compute_metrics_regression(self, eval_pred):
         predictions, labels = eval_pred
@@ -711,9 +722,10 @@ class TaskRunner:
         if (
             task_type == "classification"
             or task_type == "pair_classification"
-            or task_type == "token_classification"
         ):
-            score_name = "accuracy"
+            score_name = "f1"
+        elif task_type == "token_classification":
+            score_name = "f1"
         elif task_type == "regression":
             score_name = "r2"
         else:
